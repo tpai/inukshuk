@@ -3,6 +3,7 @@
 
 import { Container, Graphics } from 'pixi.js';
 import { debug } from './env';
+import type { Scenery } from './scenery';
 import { darken, lighten, lerp, rotate } from './util';
 
 export type Species = 'squirrel' | 'beaver' | 'bison' | 'moose' | 'wolf' | 'grizzly';
@@ -29,7 +30,6 @@ interface Look {
   walk: number;
   run: number;
   gait: 'walk' | 'bound';
-  layer: 'front' | 'back';
   grazes: boolean;
   nightOwl: number; // chance to stay up at night
   napper: number; // chance to nap in daylight
@@ -53,7 +53,7 @@ function blob(g: Graphics, cx: number, cy: number, rx: number, ry: number, rot: 
 const LOOKS: Record<Species, Look> = {
   squirrel: {
     len: 16, bodyH: 9, leg: 5, legW: 2.4, coat: 0xb0612f, belly: 0xead9bd,
-    walk: 26, run: 80, gait: 'bound', layer: 'front', grazes: true, nightOwl: 0, napper: 0.05,
+    walk: 26, run: 80, gait: 'bound', grazes: true, nightOwl: 0, napper: 0.05,
     neck: { x: 6.5, y: -3 }, tailAt: { x: -7, y: -1 },
     head: (g, L) => {
       blob(g, 2.5, 0, 5, 4.2, 0, L.coat);
@@ -70,7 +70,7 @@ const LOOKS: Record<Species, Look> = {
   },
   beaver: {
     len: 34, bodyH: 18, leg: 5, legW: 4.5, coat: 0x6e4a2e, belly: 0x8c6844,
-    walk: 16, run: 46, gait: 'walk', layer: 'front', grazes: true, nightOwl: 0.5, napper: 0.15,
+    walk: 16, run: 46, gait: 'walk', grazes: true, nightOwl: 0.5, napper: 0.15,
     neck: { x: 13, y: -2 }, tailAt: { x: -15, y: 3 },
     head: (g, L) => {
       blob(g, 5, 0, 9, 7.5, 0.1, L.coat);
@@ -88,7 +88,7 @@ const LOOKS: Record<Species, Look> = {
   },
   bison: {
     len: 78, bodyH: 40, leg: 22, legW: 7, coat: 0x5a3f2c, belly: 0x4a3322,
-    walk: 14, run: 70, gait: 'walk', layer: 'back', grazes: true, nightOwl: 0, napper: 0.1,
+    walk: 14, run: 70, gait: 'walk', grazes: true, nightOwl: 0, napper: 0.1,
     neck: { x: 33, y: 4 }, tailAt: { x: -38, y: -10 },
     body: (g, L) => {
       blob(g, 0, 0, L.len / 2, L.bodyH / 2, 0, L.coat);
@@ -111,7 +111,7 @@ const LOOKS: Record<Species, Look> = {
   },
   moose: {
     len: 70, bodyH: 34, leg: 42, legW: 5, coat: 0x3e2f25, belly: 0x3e2f25, legColor: 0x8c7b67,
-    walk: 18, run: 64, gait: 'walk', layer: 'back', grazes: true, nightOwl: 0.2, napper: 0.1,
+    walk: 18, run: 64, gait: 'walk', grazes: true, nightOwl: 0.2, napper: 0.1,
     neck: { x: 30, y: -10 }, tailAt: { x: -34, y: -8 },
     body: (g, L) => {
       blob(g, 0, 0, L.len / 2, L.bodyH / 2, 0, L.coat);
@@ -133,7 +133,7 @@ const LOOKS: Record<Species, Look> = {
   },
   wolf: {
     len: 46, bodyH: 17, leg: 20, legW: 4, coat: 0x8d8a83, belly: 0xdcd5c6,
-    walk: 24, run: 110, gait: 'walk', layer: 'front', grazes: false, nightOwl: 0.5, napper: 0.15,
+    walk: 24, run: 110, gait: 'walk', grazes: false, nightOwl: 0.5, napper: 0.15,
     neck: { x: 20, y: -6 }, tailAt: { x: -22, y: -4 },
     body: (g, L) => {
       blob(g, 0, 0, L.len / 2, L.bodyH / 2, 0, L.coat);
@@ -158,7 +158,7 @@ const LOOKS: Record<Species, Look> = {
   },
   grizzly: {
     len: 70, bodyH: 38, leg: 19, legW: 10, coat: 0x7b5636, belly: 0x6b4a2e,
-    walk: 14, run: 84, gait: 'walk', layer: 'back', grazes: false, nightOwl: 0.1, napper: 0.3,
+    walk: 14, run: 84, gait: 'walk', grazes: false, nightOwl: 0.1, napper: 0.3,
     neck: { x: 30, y: 0 }, tailAt: { x: -34, y: -6 },
     body: (g, L) => {
       blob(g, 0, 0, L.len / 2, L.bodyH / 2, 0, L.coat);
@@ -181,11 +181,36 @@ const LOOKS: Record<Species, Look> = {
   },
 };
 
-/** A spot within ±half that keeps clear of the inukshuk's footprint (±avoid) when there is room. */
-function pickX(half: number, avoid: number, near?: number): number {
-  const side = near !== undefined && Math.random() < 0.7 ? Math.sign(near) || 1 : Math.random() < 0.5 ? -1 : 1;
-  if (half - avoid < 24) return (Math.random() * 2 - 1) * half;
-  return side * (avoid + 8 + Math.random() * (half - avoid - 8));
+/**
+ * A strip of land animals can roam: the ground in front of the inukshuk, or the top of a ridge.
+ * Coordinates are the layer's own; `y` follows the land's contour.
+ */
+export interface Terrain {
+  layer: Container;
+  /** Size multiplier; read every frame so zoom changes apply. */
+  scale: () => number;
+  weight: number;
+  lo: () => number;
+  hi: () => number;
+  y: (x: number) => number;
+  /** Keep-out interval (the inukshuk's footprint) animals rest beside rather than inside. */
+  avoid?: () => [number, number];
+  /** Ridge land repeats with this period; animals that leave the view come round again. */
+  period?: () => number;
+}
+
+/** A spot in the terrain's range, clear of its keep-out interval when there is room. */
+function pickX(t: Terrain, near?: number): number {
+  const lo = t.lo(), hi = t.hi();
+  const av = t.avoid?.();
+  if (!av || av[0] - lo < 24 || hi - av[1] < 24) {
+    if (near === undefined) return lo + Math.random() * (hi - lo);
+    // Wander a little from where we are.
+    const span = (hi - lo) * 0.35;
+    return Math.max(lo, Math.min(hi, near + (Math.random() * 2 - 1) * span));
+  }
+  const left = near !== undefined && Math.random() < 0.7 ? near < (av[0] + av[1]) / 2 : Math.random() < 0.5;
+  return left ? lo + Math.random() * (av[0] - 8 - lo) : av[1] + 8 + Math.random() * (hi - av[1] - 8);
 }
 
 const WOLF_COATS = [0x8d8a83, 0x6f6c66, 0xa8a49b];
@@ -211,8 +236,10 @@ export class Animal {
   private crouch = 0;
   private graze = 0;
   private blink = 2;
-  private scale: number;
+  private scale = 1;
+  private readonly baseScale: number;
   private baseY: number;
+  terrain!: Terrain;
 
   readonly id: string;
 
@@ -221,7 +248,7 @@ export class Animal {
     const base = LOOKS[species];
     this.L = species === 'wolf' ? { ...base, coat: WOLF_COATS[variant % 3] } : base;
     const L = this.L;
-    this.scale = SPECIES_SCALE[species] * (species === 'wolf' ? [1, 0.92, 0.86][variant % 3] : 1);
+    this.baseScale = SPECIES_SCALE[species] * (species === 'wolf' ? [1, 0.92, 0.86][variant % 3] : 1);
     this.baseY = -(L.leg + L.bodyH * 0.3);
 
     const legColor = L.legColor ?? darken(L.coat, 0.08);
@@ -271,76 +298,80 @@ export class Animal {
     this.zzz.visible = false;
     this.zzz.position.set(L.neck.x + 6, this.baseY - L.bodyH * 0.6 - 6);
     this.root.addChild(this.zzz);
-    this.root.scale.set(this.scale);
   }
 
-  get layer() {
-    return this.L.layer;
+  /** Put the animal on a strip of land. */
+  placeOn(t: Terrain) {
+    this.terrain = t;
+    this.scale = this.baseScale * t.scale();
+    t.layer.addChild(this.root);
   }
 
-  avoid = 0;
-
-  setState(s: AnimalState, half: number) {
+  setState(s: AnimalState) {
     this.state = s;
-    const L = this.L;
     if (s === 'idle') this.timer = 3 + Math.random() * 6;
     if (s === 'sleep') this.timer = 20 + Math.random() * 40;
     if (s === 'walk' || s === 'run') {
-      // Walks mostly stay on this side; runs may cross behind the inukshuk.
-      this.target = pickX(half, this.avoid, s === 'walk' ? this.x : undefined);
+      // Walks stay near; runs may go anywhere.
+      this.target = pickX(this.terrain, s === 'walk' ? this.x : undefined);
       this.timer = 30;
     }
-    if (L.grazes && s === 'idle' && Math.random() < 0.6) this.graze = 1;
-    else this.graze = 0;
+    this.graze = this.L.grazes && s === 'idle' && Math.random() < 0.6 ? 1 : 0;
   }
 
-  /** Walk in from a side of the view. */
-  enter(half: number) {
-    const side = Math.random() < 0.5 ? -1 : 1;
-    this.x = side * (half + 50);
+  /** Walk in from just outside the view. */
+  enter() {
+    const t = this.terrain;
+    const left = Math.random() < 0.5;
+    this.x = left ? t.lo() - 40 : t.hi() + 40;
     this.state = 'walk';
-    this.target = pickX(half, this.avoid, side);
+    this.target = pickX(t, left ? t.lo() : t.hi());
     this.timer = 60;
   }
 
-  startle(fromX: number, half: number) {
-    this.state = 'run';
-    const away = this.x >= fromX ? 1 : -1;
-    this.target = away * (this.avoid + (half - this.avoid) * (0.6 + Math.random() * 0.4));
-    this.timer = 6;
-  }
-
-  private decide(night: number, half: number) {
+  private decide(night: number) {
     const L = this.L;
     const r = Math.random();
-    if (night > 0.6 && Math.random() > L.nightOwl) return this.setState('sleep', half);
-    if (r < L.napper) return this.setState('sleep', half);
-    if (r < L.napper + (this.species === 'squirrel' ? 0.25 : 0.08)) return this.setState('run', half);
-    if (r < 0.55) return this.setState('walk', half);
-    this.setState('idle', half);
+    if (night > 0.6 && Math.random() > L.nightOwl) return this.setState('sleep');
+    if (r < L.napper) return this.setState('sleep');
+    if (r < L.napper + (this.species === 'squirrel' ? 0.25 : 0.08)) return this.setState('run');
+    if (r < 0.55) return this.setState('walk');
+    this.setState('idle');
   }
 
-  update(dt: number, night: number, half: number) {
+  update(dt: number, night: number) {
     const L = this.L;
+    const t = this.terrain;
     this.t += dt;
+    this.scale = this.baseScale * t.scale();
     const forced = debug.animalState;
-    if (forced && this.state !== forced) this.setState(forced, half);
+    if (forced && this.state !== forced) this.setState(forced);
+
+    // Ridge land repeats: whoever wanders out of view comes round from the other side.
+    const period = t.period?.();
+    if (period) {
+      if (this.x < t.lo() - 80) {
+        this.x += period;
+        this.target += period;
+      } else if (this.x > t.hi() + 80) {
+        this.x -= period;
+        this.target -= period;
+      }
+    }
 
     // Behaviour.
     if (!forced) {
       this.timer -= dt;
       if (this.state === 'sleep' && night < 0.3 && this.timer > 5 && Math.random() < dt * 0.2) this.timer = 0;
-      if (this.timer <= 0) this.decide(night, half);
+      if (this.timer <= 0) this.decide(night);
     }
     let speed = 0;
     if (this.state === 'walk' || this.state === 'run') {
       const v = this.state === 'run' ? L.run : L.walk;
-      const d = this.target - this.x;
-      if (forced) {
-        // Pace back and forth so a forced gait keeps moving.
-        if (Math.abs(d) < 2) this.target = this.target > 0 ? -half * 0.8 : half * 0.8;
-      } else if (Math.abs(d) < 2) {
-        this.setState('idle', half);
+      if (Math.abs(this.target - this.x) < 2) {
+        // A forced gait paces back and forth; otherwise arriving means resting.
+        if (forced) this.target = pickX(t);
+        else this.setState('idle');
       }
       if (this.state === 'walk' || this.state === 'run') {
         this.dir = Math.sign(this.target - this.x) || this.dir;
@@ -412,7 +443,11 @@ export class Animal {
     }
 
     this.root.x = this.x;
-    this.root.scale.x = this.dir * this.scale;
+    this.root.y = t.y(this.x);
+    // Lean with the slope a little.
+    const slope = (t.y(this.x + 6 * this.scale) - t.y(this.x - 6 * this.scale)) / (12 * this.scale);
+    this.root.rotation = Math.max(-0.35, Math.min(0.35, Math.atan(slope) * 0.6));
+    this.root.scale.set(this.dir * this.scale, this.scale);
     this.zzz.scale.x = this.dir;
   }
 
@@ -421,86 +456,69 @@ export class Animal {
   }
 }
 
-/** The animals around one inukshuk. `back` sits behind the figure, `front` in front of it. */
-/** How much ground (logical px each side of the figure) the herd needs at this age. */
-export function herdRoom(age: number): number {
-  if (age >= 90) return 170;
-  if (age >= 30) return 140;
-  if (age >= 7) return 90;
-  if (age >= 1) return 55;
-  return 0;
-}
-
+/** All the animals that have gathered, spread over the ground and the ridges. */
 export class Herd {
   private animals: Animal[] = [];
   private started = false;
 
-  constructor(private back: Container, private front: Container) {
-    // A little depth: the back row stands slightly further up the ground.
-    back.y = -4;
-    front.y = 5;
+  constructor(private terrains: Terrain[]) {}
+
+  private pickTerrain(): Terrain {
+    const total = this.terrains.reduce((a, t) => a + t.weight, 0);
+    let r = Math.random() * total;
+    for (const t of this.terrains) if ((r -= t.weight) <= 0) return t;
+    return this.terrains[0];
   }
 
   /** Match the herd to an inukshuk's age. New arrivals walk in once the view is live. */
-  /** Half-width of the inukshuk's footprint, which animals prefer to rest beside rather than behind. */
-  avoid = 0;
-
-  sync(age: number, half: number) {
-    const want: { species: Species; i: number }[] = [];
-    for (const a of ARRIVALS) if (age >= a.days) for (let i = 0; i < a.count; i++) want.push({ species: a.species, i });
-    const ids = new Set(want.map((w) => w.species + w.i));
+  sync(age: number) {
+    const want: string[] = [];
+    for (const a of ARRIVALS) if (age >= a.days) for (let i = 0; i < a.count; i++) want.push(a.species + i);
     for (const a of [...this.animals])
-      if (!ids.has(a.id)) {
+      if (!want.includes(a.id)) {
         a.destroy();
         this.animals.splice(this.animals.indexOf(a), 1);
       }
-    for (const w of want) {
-      if (this.animals.some((a) => a.id === w.species + w.i)) continue;
-      const a = new Animal(w.species, w.i);
-      (a.layer === 'back' ? this.back : this.front).addChild(a.root);
-      a.avoid = this.avoid;
-      if (this.started) a.enter(half);
-      else {
-        a.x = pickX(half, this.avoid);
-        a.setState('idle', half);
+    for (const a of ARRIVALS)
+      for (let i = 0; i < a.count; i++) {
+        if (age < a.days || this.animals.some((x) => x.id === a.species + i)) continue;
+        const animal = new Animal(a.species, i);
+        // A wolf pack keeps together.
+        const pack = a.species === 'wolf' && i > 0 ? this.animals.find((x) => x.id === 'wolf0')?.terrain : undefined;
+        animal.placeOn(pack ?? this.pickTerrain());
+        if (this.started) animal.enter();
+        else {
+          animal.x = pickX(animal.terrain);
+          animal.setState('idle');
+        }
+        this.animals.push(animal);
       }
-      this.animals.push(a);
-    }
     this.started = true;
   }
 
-  /** Something big happened at `x` (the inukshuk landed): wake up and scatter. */
-  startle(x: number, half: number) {
-    for (const a of this.animals) if (Math.abs(a.x - x) < half) a.startle(x, half);
-  }
-
-  /** The ground slid by `dx` (the inukshuk is walking): animals drift with it and wrap around. */
-  drift(dx: number, half: number) {
-    for (const a of this.animals) {
-      a.x -= dx;
-      if (a.x < -half - 70) {
-        a.x = half + 60;
-        a.setState('walk', half);
-      } else if (a.x > half + 70) {
-        a.x = -half - 60;
-        a.setState('walk', half);
-      }
-    }
-  }
-
-  update(dt: number, night: number, half: number) {
-    for (const a of this.animals) {
-      a.avoid = this.avoid;
-      a.update(dt, night, half);
-    }
-  }
-
-  get count() {
-    return this.animals.length;
+  update(dt: number, night: number) {
+    for (const a of this.animals) a.update(dt, night);
   }
 
   destroy() {
     for (const a of this.animals) a.destroy();
     this.animals = [];
   }
+}
+
+/**
+ * The three ridges as terrain, far to near. Ridge animals are drawn in screen pixels, so they are
+ * sized by the figure's zoom (`zoom`) and shrink with distance.
+ */
+export function ridgeTerrains(scenery: Scenery, zoom: () => number): Terrain[] {
+  const depth = [0.24, 0.34, 0.46];
+  return [0.13, 0.22, 0.3].map((weight, i) => ({
+    layer: scenery.ridgeAnimals[i],
+    weight,
+    scale: () => zoom() * depth[i],
+    lo: () => scenery.ridgeView(i)[0],
+    hi: () => scenery.ridgeView(i)[1],
+    y: (x: number) => scenery.ridgeY(i, x),
+    period: () => scenery.period,
+  }));
 }

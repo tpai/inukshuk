@@ -2,10 +2,19 @@
 
 import type { PlacedStone, StoneStyle } from './stone';
 
+/** How the inukshuk came to be. */
+export interface BuildStats {
+  startedAt: number; // ms, first stone taken from the tray
+  durationMs: number; // time spent building
+  moves: number; // stones let go onto the stack
+  undos: number;
+}
+
 export interface Inukshuk {
   id: string;
-  created: number; // ms
+  created: number; // ms, when it was finished
   stones: PlacedStone[];
+  stats?: BuildStats;
 }
 
 const KEY = 'inukshuk.v1.ridge';
@@ -28,8 +37,8 @@ function saveAll(list: Inukshuk[]) {
   }
 }
 
-export function add(stones: PlacedStone[]): Inukshuk {
-  const item: Inukshuk = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), created: Date.now(), stones };
+export function add(stones: PlacedStone[], created: number, stats: BuildStats | null): Inukshuk {
+  const item: Inukshuk = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), created, stones, ...(stats ? { stats } : {}) };
   saveAll([item, ...loadAll()]);
   return item;
 }
@@ -43,18 +52,26 @@ export function get(id: string): Inukshuk | undefined {
 }
 
 // ---- share codec ----
-// [version u8][created u32 seconds][count u8] then per stone:
-// [style u8][seed u32][x i16 ×10][y i16 ×10][angle i16 ×10000]
+// v1: [1][created u32 s][count u8] stones…
+// v2: [2][created u32 s][count u8][started u32 s][duration u32 s][moves u16][undos u16] stones…
+// stone: [style u8][seed u32][x i16 ×10][y i16 ×10][angle i16 ×10000]
 
-const VERSION = 1;
+type Shared = Pick<Inukshuk, 'created' | 'stones' | 'stats'>;
 
-export function encode(item: Pick<Inukshuk, 'created' | 'stones'>): string {
-  const buf = new DataView(new ArrayBuffer(6 + item.stones.length * 11));
-  buf.setUint8(0, VERSION);
+export function encode(item: Shared): string {
+  const head = item.stats ? 18 : 6;
+  const buf = new DataView(new ArrayBuffer(head + item.stones.length * 11));
+  buf.setUint8(0, item.stats ? 2 : 1);
   buf.setUint32(1, Math.floor(item.created / 1000));
   buf.setUint8(5, item.stones.length);
+  if (item.stats) {
+    buf.setUint32(6, Math.floor(item.stats.startedAt / 1000));
+    buf.setUint32(10, Math.round(item.stats.durationMs / 1000));
+    buf.setUint16(14, Math.min(65535, item.stats.moves));
+    buf.setUint16(16, Math.min(65535, item.stats.undos));
+  }
   item.stones.forEach((s, i) => {
-    const o = 6 + i * 11;
+    const o = head + i * 11;
     let a = s.angle % (Math.PI * 2);
     if (a > Math.PI) a -= Math.PI * 2;
     if (a < -Math.PI) a += Math.PI * 2;
@@ -69,18 +86,24 @@ export function encode(item: Pick<Inukshuk, 'created' | 'stones'>): string {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export function decode(code: string): Pick<Inukshuk, 'created' | 'stones'> | null {
+export function decode(code: string): Shared | null {
   try {
     const bin = atob(code.replace(/-/g, '+').replace(/_/g, '/'));
     const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
     const buf = new DataView(bytes.buffer);
-    if (buf.getUint8(0) !== VERSION) return null;
+    const version = buf.getUint8(0);
+    if (version !== 1 && version !== 2) return null;
+    const head = version === 2 ? 18 : 6;
     const created = buf.getUint32(1) * 1000;
     const count = buf.getUint8(5);
-    if (bytes.length < 6 + count * 11) return null;
+    if (bytes.length < head + count * 11) return null;
+    const stats: BuildStats | undefined =
+      version === 2
+        ? { startedAt: buf.getUint32(6) * 1000, durationMs: buf.getUint32(10) * 1000, moves: buf.getUint16(14), undos: buf.getUint16(16) }
+        : undefined;
     const stones: PlacedStone[] = [];
     for (let i = 0; i < count; i++) {
-      const o = 6 + i * 11;
+      const o = head + i * 11;
       const style = buf.getUint8(o);
       if (style > 2) return null;
       stones.push({
@@ -91,13 +114,13 @@ export function decode(code: string): Pick<Inukshuk, 'created' | 'stones'> | nul
         angle: buf.getInt16(o + 9) / 10000,
       });
     }
-    return { created, stones };
+    return stats ? { created, stones, stats } : { created, stones };
   } catch {
     return null;
   }
 }
 
-export function shareUrl(item: Pick<Inukshuk, 'created' | 'stones'>): string {
+export function shareUrl(item: Shared): string {
   const u = new URL(location.href);
   u.search = '';
   u.hash = '#/s/' + encode(item);

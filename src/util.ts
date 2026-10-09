@@ -141,3 +141,33 @@ export function outwardNormal(a: Vec, b: Vec, center: Vec): Vec {
   if ((mid.x - center.x) * n.x + (mid.y - center.y) * n.y < 0) n = { x: -n.x, y: -n.y };
   return n;
 }
+
+/** Intersection of two convex polygons (Sutherland–Hodgman). Works for either winding. */
+export function clipConvex(subject: Vec[], clip: Vec[]): Vec[] {
+  let area = 0;
+  for (let i = 0; i < clip.length; i++) {
+    const a = clip[i], b = clip[(i + 1) % clip.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  const sign = Math.sign(area) || 1;
+  const inside = (p: Vec, a: Vec, b: Vec) => sign * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) >= 0;
+  const cross = (p: Vec, q: Vec, a: Vec, b: Vec): Vec => {
+    const d1 = { x: q.x - p.x, y: q.y - p.y }, d2 = { x: b.x - a.x, y: b.y - a.y };
+    const den = d1.x * d2.y - d1.y * d2.x || 1e-9;
+    const t = ((a.x - p.x) * d2.y - (a.y - p.y) * d2.x) / den;
+    return { x: p.x + d1.x * t, y: p.y + d1.y * t };
+  };
+  let out = subject;
+  for (let i = 0; i < clip.length && out.length; i++) {
+    const a = clip[i], b = clip[(i + 1) % clip.length];
+    const input = out;
+    out = [];
+    for (let j = 0; j < input.length; j++) {
+      const p = input[j], q = input[(j + 1) % input.length];
+      const pin = inside(p, a, b), qin = inside(q, a, b);
+      if (pin) out.push(p);
+      if (pin !== qin) out.push(cross(p, q, a, b));
+    }
+  }
+  return out;
+}

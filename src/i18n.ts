@@ -21,9 +21,13 @@ const dict = {
   hintReady: { zh: '站穩了', en: 'It stands' },
   hintFull: { zh: '最多 20 顆石頭', en: '20 stones at most' },
   hintRotate: { zh: '雙指或滾輪可以旋轉', en: 'Two fingers or the scroll wheel rotate' },
-  idle: { zh: '靜立', en: 'Idle' },
-  walk: { zh: '行走', en: 'Walk' },
-  jump: { zh: '跳躍', en: 'Jump' },
+  started: { zh: '開始疊', en: 'Started' },
+  took: { zh: '花了', en: 'Took' },
+  stones: { zh: '石頭', en: 'Stones' },
+  stonesDetail: { zh: '{n} 顆，放了 {m} 次，復原 {u} 次', en: '{n}, placed {m} times, {u} undos' },
+  hours: { zh: '{n} 小時', en: '{n} h' },
+  minutes: { zh: '{n} 分', en: '{n} min' },
+  seconds: { zh: '{n} 秒', en: '{n} s' },
   keepBuilding: { zh: '繼續疊', en: 'Keep building' },
   save: { zh: '放上山脊', en: 'Place on the ridge' },
   saved: { zh: '已放上山脊', en: 'Placed on the ridge' },
@@ -92,6 +96,20 @@ export function builtAgo(days: number): string {
   if (d < 1) return t('builtToday');
   if (d === 1) return t('builtDay');
   return t('builtDays', { n: d });
+}
+
+export function formatDuration(ms: number): string {
+  const total = Math.max(1, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  const parts: string[] = [];
+  if (h) parts.push(t('hours', { n: h }));
+  if (m) parts.push(t('minutes', { n: m }));
+  if (s && !h) parts.push(t('seconds', { n: s }));
+  return parts.join(' ');
+}
+
+export function formatDateTime(ms: number): string {
+  return new Intl.DateTimeFormat(lang === 'zh' ? 'zh-Hant' : 'en', { dateStyle: 'medium', timeStyle: 'short' }).format(ms);
 }
 
 document.documentElement.lang = lang === 'zh' ? 'zh-Hant' : 'en';

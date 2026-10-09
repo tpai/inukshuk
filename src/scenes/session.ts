@@ -2,6 +2,7 @@
 // states it passed through so a collapse can be undone.
 
 import type { PlacedStone, StoneStyle } from '../stone';
+import type { BuildStats } from '../store';
 import { randomSeed } from '../util';
 
 const TRAY_SIZE = 8;
@@ -22,6 +23,13 @@ export interface Session {
   style: StoneStyle;
   angle: number; // tray rotation, radians, in 45° steps
   history: Snapshot[];
+  /** When the first stone came out of the tray (ms), or null before that. */
+  startedAt: number | null;
+  /** Time actually spent on the Build screen since then. */
+  activeMs: number;
+  /** Times a stone was let go onto the stack. */
+  moves: number;
+  undos: number;
 }
 
 export const freshBatch = () => Array.from({ length: TRAY_SIZE }, randomSeed);
@@ -49,7 +57,7 @@ function load(): Session | null {
     if (!raw) return null;
     const s = JSON.parse(raw) as Session;
     if (!Array.isArray(s.stones) || !s.tray || !Array.isArray(s.history)) return null;
-    return { ...s, style: s.style ?? 0, angle: s.angle ?? 0 };
+    return { ...s, style: s.style ?? 0, angle: s.angle ?? 0, startedAt: s.startedAt ?? null, activeMs: s.activeMs ?? 0, moves: s.moves ?? 0, undos: s.undos ?? 0 };
   } catch {
     return null;
   }
@@ -67,7 +75,7 @@ export function saveSession() {
 export function getSession(): Session {
   if (!session) session = load();
   if (!session) {
-    session = { stones: [], tray: { 0: freshBatch(), 1: freshBatch(), 2: freshBatch() }, style: 0, angle: 0, history: [] };
+    session = { stones: [], tray: { 0: freshBatch(), 1: freshBatch(), 2: freshBatch() }, style: 0, angle: 0, history: [], startedAt: null, activeMs: 0, moves: 0, undos: 0 };
     pushHistory(session, snapshot(session));
   }
   return session;
@@ -83,4 +91,8 @@ export function endSession() {
 }
 
 /** What Done hands to the preview. */
-export const draft = { stones: [] as PlacedStone[], created: 0 };
+export const draft = { stones: [] as PlacedStone[], created: 0, stats: null as BuildStats | null };
+
+export function statsOf(s: Session, finishedAt: number): BuildStats {
+  return { startedAt: s.startedAt ?? finishedAt, durationMs: s.activeMs, moves: s.moves, undos: s.undos };
+}

@@ -112,11 +112,9 @@ export class Birds {
           b.c.position.set(b.perch.local.x, b.perch.local.y);
           b.c.scale.x = sx;
           b.wing.scale.y = 1;
-          this.rig.nudge(b.perch.bone, 0.06);
           sound.chirp();
         }
       } else if (b.state === 'perched') {
-        b.c.rotation = -b.perch.part.rotation * 0.6;
         b.peck -= dt;
         if (b.peck <= 0) {
           b.peck = 0.6 + Math.random() * 2.2;

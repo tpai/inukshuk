@@ -9,7 +9,7 @@ import { Scenery } from '../scenery';
 import { type PlacedStone, type StoneStyle, STYLES, stoneShape, drawStone } from '../stone';
 import { classify, drawBoneOverlay, worldPoly, type Verdict } from '../rig';
 import { sound } from '../audio';
-import { getSession, freshBatch, draft, saveSession, snapshot, restoreInto, pushHistory } from './session';
+import { getSession, freshBatch, draft, saveSession, snapshot, restoreInto, pushHistory, statsOf } from './session';
 import { type Vec, pointInConvex, polyDistance, rotate, darken, lighten, mulberry32 } from '../util';
 
 const PPM = 30; // logical px per physics metre
@@ -89,6 +89,7 @@ export class BuildScene implements Scene {
     window.addEventListener('pointerup', this.onUp);
     window.addEventListener('pointercancel', this.onUp);
     window.addEventListener('keydown', this.onKey);
+    document.addEventListener('visibilitychange', saveSession);
   }
 
   // ---------- stones ----------
@@ -180,6 +181,7 @@ export class BuildScene implements Scene {
     this.grab = null;
     this.twist = null;
     this.liftClear(g.stone);
+    this.session.moves++;
     g.stone.collider.setCollisionGroups(0xffffffff);
     g.stone.g.alpha = 1;
     g.stone.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
@@ -295,6 +297,7 @@ export class BuildScene implements Scene {
     e.preventDefault();
     sound.resumeFromGesture();
     this.session.tray[style][slot] = null;
+    this.session.startedAt ??= Date.now();
     const p = this.toLogical(e.clientX, e.clientY);
     const shape = stoneShape(style, seed);
     const at = { x: Math.max(-HALF_W + 20, Math.min(HALF_W - 20, p.x)), y: Math.min(p.y, -Math.max(shape.w, shape.h) / 2 - 30) };
@@ -412,6 +415,7 @@ export class BuildScene implements Scene {
     if (h.length > 1 && this.layoutKey(h[h.length - 1].stones) === current) h.pop();
     const target = h[h.length - 1];
     if (!target) return;
+    this.session.undos++;
     for (const s of [...this.stones]) this.removeStone(s, false);
     restoreInto(this.session, target);
     for (const p of this.session.stones) this.addStone(p.style, p.seed, { x: p.x, y: p.y }, p.angle);
@@ -429,6 +433,7 @@ export class BuildScene implements Scene {
     this.persist();
     draft.stones = this.placed();
     draft.created = Date.now();
+    draft.stats = statsOf(this.session, draft.created);
     go('#/draft');
   }
 
@@ -441,6 +446,7 @@ export class BuildScene implements Scene {
     this.scale = Math.max(0.5, Math.min(w / (HALF_W * 2 + 30), (this.groundY - top - 10) / 470, 1.6));
     this.world.position.set(w / 2, this.groundY);
     this.world.scale.set(this.scale);
+    this.scenery.reserveTop = this.ui?.querySelector('.hint')?.getBoundingClientRect().bottom ?? 0;
     this.scenery.resize(w, hgt, this.groundY + 6 * this.scale);
     this.drawSlab();
   }
@@ -459,6 +465,8 @@ export class BuildScene implements Scene {
   // ---------- loop ----------
 
   update(dt: number, env: Env) {
+    // The clock runs only while someone is actually building.
+    if (this.session.startedAt !== null) this.session.activeMs += dt * 1000;
     this.scenery.update(dt, env);
     this.world.tint = this.scenery.light;
 
@@ -557,6 +565,7 @@ export class BuildScene implements Scene {
     window.removeEventListener('pointerup', this.onUp);
     window.removeEventListener('pointercancel', this.onUp);
     window.removeEventListener('keydown', this.onKey);
+    document.removeEventListener('visibilitychange', saveSession);
     this.physics.free();
     this.scenery.destroy();
     this.root.destroy({ children: true });

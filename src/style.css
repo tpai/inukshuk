@@ -223,7 +223,7 @@ button:disabled { cursor: default; }
   margin: 0;
   text-align: center;
   font-size: 18px;
-  color: var(--ink);
+  color: var(--on-sky);
 }
 
 /* ---- dock (home + preview) ---- */
@@ -252,6 +252,18 @@ button:disabled { cursor: default; }
   font-size: 14px;
   color: var(--granite);
 }
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 14px;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.facts dt { color: var(--granite); }
+.facts dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
 
 .actions {
   display: flex;

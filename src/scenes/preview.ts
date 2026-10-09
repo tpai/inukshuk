@@ -1,15 +1,16 @@
-// Preview: the finished inukshuk standing in the viewer's own hour and season.
+// Preview: the finished inukshuk standing in the viewer's own hour and season, with how it was made.
 
 import { Container, Graphics } from 'pixi.js';
 import { type Scene, ctx, go, h, toast } from '../app';
 import { type Env, ageDays, debug, nightness, reducedMotion } from '../env';
-import { t, builtAgo, lang, type Key } from '../i18n';
+import { t, builtAgo, lang, formatDuration, formatDateTime, type Key } from '../i18n';
 import { Scenery } from '../scenery';
 import type { PlacedStone } from '../stone';
-import { Rig, classify, drawBoneOverlay, type Motion } from '../rig';
+import { Rig, classify, drawBoneOverlay } from '../rig';
 import { Birds } from '../birds';
-import { Herd, herdRoom } from '../animals';
+import { Herd, ridgeTerrains, type Terrain } from '../animals';
 import * as store from '../store';
+import type { BuildStats } from '../store';
 import { draft, endSession } from './session';
 
 export type PreviewMode =
@@ -17,30 +18,21 @@ export type PreviewMode =
   | { kind: 'saved'; id: string }
   | { kind: 'shared'; code: string };
 
-const MOTIONS: { m: Motion; key: Key }[] = [
-  { m: 'idle', key: 'idle' },
-  { m: 'walk', key: 'walk' },
-  { m: 'jump', key: 'jump' },
-];
-
 export class PreviewScene implements Scene {
   root = new Container();
   private scenery: Scenery;
   private world = new Container();
   private shadow = new Graphics();
-  private animalsBack = new Container();
   private rigLayer = new Container();
   private animalsFront = new Container();
-  private herd = new Herd(this.animalsBack, this.animalsFront);
-  private prevRootY = 0;
-  private fitAge = -1;
+  private herd: Herd;
   private birdLayer = new Container();
   private overlay = new Graphics();
   private rig: Rig | null = null;
   private birds: Birds | null = null;
   private rigKey = '';
-  private motion: Motion = 'idle';
   private stones: PlacedStone[] = [];
+  private stats: BuildStats | null = null;
   private created = Date.now();
   private savedId: string | null = null;
   private missing: Key | null = null;
@@ -53,12 +45,14 @@ export class PreviewScene implements Scene {
     if (mode.kind === 'draft') {
       this.stones = draft.stones;
       this.created = draft.created;
+      this.stats = draft.stats;
       if (!this.stones.length) this.missing = 'notFound';
     } else if (mode.kind === 'saved') {
       const item = store.get(mode.id);
       if (item) {
         this.stones = item.stones;
         this.created = item.created;
+        this.stats = item.stats ?? null;
         this.savedId = item.id;
       } else this.missing = 'notFound';
     } else {
@@ -66,14 +60,31 @@ export class PreviewScene implements Scene {
       if (item) {
         this.stones = item.stones;
         this.created = item.created;
+        this.stats = item.stats ?? null;
       } else this.missing = 'brokenLink';
     }
     this.scenery = new Scenery((this.created / 1000) % 9973 | 0);
     this.root.addChild(this.scenery.back, this.world, this.scenery.front);
-    this.world.addChild(this.shadow, this.animalsBack, this.rigLayer, this.animalsFront, this.birdLayer, this.overlay);
+    this.world.addChild(this.shadow, this.rigLayer, this.animalsFront, this.birdLayer, this.overlay);
+    this.animalsFront.y = 4;
+    this.herd = new Herd(this.terrains());
   }
 
   private verdict = () => classify(this.stones);
+
+  /** Ground in front of the figure, plus the three ridges behind it (smaller with distance). */
+  private terrains(): Terrain[] {
+    const half = () => ctx.w / 2 / this.world.scale.x - 20;
+    const ground: Terrain = {
+      layer: this.animalsFront, scale: () => 1, weight: 0.35,
+      lo: () => -half(), hi: () => half(), y: () => 0,
+      avoid: () => {
+        const w = (this.rig?.width ?? 0) / 2 + 6;
+        return [-w, w];
+      },
+    };
+    return [ground, ...ridgeTerrains(this.scenery, () => this.world.scale.x)];
+  }
 
   private buildRig(env: Env) {
     const age = ageDays(this.created);
@@ -82,20 +93,12 @@ export class PreviewScene implements Scene {
     this.rigKey = key;
     const old = this.rig;
     const rig = new Rig(this.stones, this.verdict(), { ageDays: age, season: env.season });
-    rig.motion = this.motion;
     this.rigLayer.addChild(rig.root);
     if (this.birds) this.birds.setRig(rig);
     else this.birds = new Birds(this.birdLayer, rig, () => ctx.w / this.world.scale.x);
     old?.destroy();
     this.rig = rig;
     this.fit();
-  }
-
-  private setMotion(m: Motion) {
-    this.motion = m;
-    if (this.rig) this.rig.motion = m;
-    if (m !== 'idle') this.birds?.scatter();
-    this.ui?.querySelectorAll<HTMLButtonElement>('.tabs .tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.m === m)));
   }
 
   render(ui: HTMLElement) {
@@ -113,13 +116,14 @@ export class PreviewScene implements Scene {
     }
 
     this.ageEl = h('p.age');
-    const tabs = h(
-      'div.tabs',
-      { role: 'tablist' },
-      ...MOTIONS.map(({ m, key }) =>
-        h('button.tab', { role: 'tab', 'aria-selected': String(this.motion === m), 'data-m': m, onclick: () => this.setMotion(m) }, t(key)),
-      ),
-    );
+    const st = this.stats;
+    const facts = st
+      ? h('dl.facts', {},
+          h('dt', {}, t('started')), h('dd', {}, formatDateTime(st.startedAt)),
+          h('dt', {}, t('took')), h('dd', {}, formatDuration(st.durationMs)),
+          h('dt', {}, t('stones')), h('dd', {}, t('stonesDetail', { n: this.stones.length, m: st.moves, u: st.undos })),
+        )
+      : null;
 
     let actions: HTMLElement;
     if (this.mode.kind === 'draft') {
@@ -140,19 +144,19 @@ export class PreviewScene implements Scene {
       );
     }
 
-    ui.append(h('footer.dock', {}, this.ageEl, tabs, actions));
+    ui.append(h('footer.dock', {}, this.ageEl, facts, actions));
     requestAnimationFrame(() => this.resize(ctx.w, ctx.h));
   }
 
   private save() {
-    const item = store.add(this.stones);
+    const item = store.add(this.stones, this.created, this.stats);
     endSession();
     toast(t('saved'));
     go('#/v/' + item.id);
   }
 
   private async share() {
-    const url = store.shareUrl({ created: this.created, stones: this.stones });
+    const url = store.shareUrl({ created: this.created, stones: this.stones, ...(this.stats ? { stats: this.stats } : {}) });
     try {
       await navigator.clipboard.writeText(url);
       toast(t('copied'));
@@ -180,6 +184,7 @@ export class PreviewScene implements Scene {
     const dock = this.ui?.querySelector('.dock');
     const dockTop = dock ? dock.getBoundingClientRect().top : hgt - 160;
     this.groundY = Math.min(dockTop - 24, hgt * 0.78);
+    this.scenery.reserveTop = this.ui?.querySelector('.bar')?.getBoundingClientRect().bottom ?? 0;
     this.scenery.resize(w, hgt, this.groundY);
     this.fit();
   }
@@ -188,16 +193,14 @@ export class PreviewScene implements Scene {
     const rig = this.rig;
     const w = ctx.w;
     const room = this.groundY - 200;
-    // Leave ground on both sides for whatever animals have gathered.
-    const side = rig ? rig.width / 2 + Math.max(30, herdRoom(ageDays(this.created))) : 1;
-    const s = rig ? Math.max(0.4, Math.min(1.9, room / (rig.height + 90), (w / 2 - 10) / side)) : 1;
-    if (rig) this.herd.avoid = rig.width / 2;
+    const s = rig ? Math.max(0.5, Math.min(1.9, room / (rig.height + 90), (w - 40) / (rig.width + 60))) : 1;
     this.world.scale.set(s);
     this.world.position.set(w / 2, this.groundY);
     if (rig) {
       // Centre horizontally on the figure's footprint.
       const xs = this.stones.map((p) => p.x);
       rig.root.x = -(Math.min(...xs) + Math.max(...xs)) / 2;
+      this.shadow.clear().ellipse(0, 2, rig.width / 2 + 10, 5).fill({ color: 0x2a2018, alpha: 0.18 });
     }
   }
 
@@ -207,33 +210,11 @@ export class PreviewScene implements Scene {
     this.buildRig(env);
     const rig = this.rig;
     if (!rig) return;
-    const keepX = rig.root.x;
-    rig.update(dt);
-    rig.root.x = keepX;
-    const half = ctx.w / 2 / this.world.scale.x - 30;
-    if (this.motion === 'walk') {
-      const step = dt * (reducedMotion ? 30 : 70) * this.world.scale.x;
-      this.scenery.scroll += step;
-      this.herd.drift(step / this.world.scale.x, half);
-    }
-    // Landing from a jump startles anything nearby.
-    if (this.motion === 'jump' && this.prevRootY < -20 && rig.root.y >= -20 && rig.root.y > this.prevRootY) this.herd.startle(0, half);
-    this.prevRootY = rig.root.y;
-    const age = ageDays(this.created);
-    if (Math.round(age) !== this.fitAge) {
-      this.fitAge = Math.round(age);
-      this.fit();
-    }
-    this.herd.sync(age, half);
-    this.herd.update(dt, nightness(env.hour), half);
-
-    const lift = -rig.root.y;
-    const k = Math.max(0.35, 1 - lift / 120);
-    this.shadow.clear().ellipse(rig.root.x + (Math.min(...this.stones.map((p) => p.x)) + Math.max(...this.stones.map((p) => p.x))) / 2, 2, (rig.width / 2 + 10) * k, 5 * k)
-      .fill({ color: 0x2a2018, alpha: 0.18 * k });
+    this.herd.sync(ageDays(this.created));
+    this.herd.update(dt, nightness(env.hour));
 
     if (this.birds) {
-      this.birds.allowed = this.motion === 'idle' && nightness(env.hour) < 0.5 && !reducedMotion;
+      this.birds.allowed = nightness(env.hour) < 0.5 && !reducedMotion;
       this.birds.update(dt);
     }
 

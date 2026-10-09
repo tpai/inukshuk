@@ -1,8 +1,8 @@
-// Turns a free-form stack of stones into a six-bone figure, and animates it.
+// Turns a free-form stack of stones into a six-part figure (legs, body, arms, head).
 
 import { Container, Graphics } from 'pixi.js';
 import { type PlacedStone, stoneShape, drawStone, type Weather } from './stone';
-import { type Vec, transform, bounds, polyDistance, outwardNormal, pointInConvex, clamp } from './util';
+import { type Vec, transform, bounds, polyDistance, outwardNormal, pointInConvex } from './util';
 
 export type Bone = 'body' | 'head' | 'armL' | 'armR' | 'legL' | 'legR';
 export const BONES: Bone[] = ['legL', 'legR', 'body', 'armL', 'armR', 'head'];
@@ -161,15 +161,10 @@ export function classify(stones: PlacedStone[]): Verdict {
 
 // ---------------------------------------------------------------------------
 
-export type Motion = 'idle' | 'walk' | 'jump' | 'still';
-
 interface Part {
   bone: Bone;
   c: Container;
   pivot: Vec;
-  wob: number;
-  wobV: number;
-  side: number;
   stones: number[];
 }
 
@@ -186,11 +181,6 @@ export interface Perch {
 export class Rig {
   root = new Container();
   private parts = new Map<Bone, Part>();
-  private t = 0;
-  private prevY = 0;
-  private prevV = 0;
-  motion: Motion = 'idle';
-  jumpPhase = 0;
   readonly height: number;
   readonly width: number;
   readonly perches: Perch[] = [];
@@ -207,8 +197,7 @@ export class Rig {
       const c = new Container();
       c.position.set(pivot.x - parentOrigin.x, pivot.y - parentOrigin.y);
       parent.addChild(c);
-      const side = bone === 'armL' || bone === 'legL' ? -1 : bone === 'armR' || bone === 'legR' ? 1 : 0;
-      const p: Part = { bone, c, pivot, wob: 0, wobV: 0, side, stones: [] };
+      const p: Part = { bone, c, pivot, stones: [] };
       this.parts.set(bone, p);
       return p;
     };
@@ -256,79 +245,6 @@ export class Rig {
 
   part(b: Bone) {
     return this.parts.get(b);
-  }
-
-  /** A small knock, e.g. when a bird lands. */
-  nudge(bone: Bone, amount = 0.05) {
-    const p = this.parts.get(bone);
-    if (p) p.wobV += amount * (p.side || (Math.random() < 0.5 ? -1 : 1)) * 12;
-  }
-
-  update(dt: number) {
-    this.t += dt;
-    const t = this.t;
-    let rootY = 0;
-    const pose: Partial<Record<Bone, number>> = {};
-
-    if (this.motion === 'idle') {
-      rootY = Math.sin(t * 1.4) * 0.8;
-      pose.head = Math.sin(t * 0.7) * 0.03;
-      pose.armL = Math.sin(t * 1.1) * 0.025;
-      pose.armR = -Math.sin(t * 1.1 + 0.6) * 0.025;
-    } else if (this.motion === 'walk') {
-      const ph = t * 5.2;
-      const sw = Math.sin(ph) * 0.2;
-      pose.legL = sw;
-      pose.legR = -sw;
-      rootY = -Math.abs(Math.cos(ph)) * 5;
-      pose.body = Math.sin(ph) * 0.035;
-      pose.armL = -sw * 0.6;
-      pose.armR = sw * 0.6;
-      pose.head = Math.sin(ph * 2) * 0.025;
-    } else if (this.motion === 'jump') {
-      // crouch 0.22 → air 0.62 → land 0.25 → rest 0.7
-      const cycle = 1.79;
-      const p = (t % cycle);
-      this.jumpPhase = p;
-      if (p < 0.22) {
-        const k = p / 0.22;
-        rootY = Math.sin(k * Math.PI * 0.5) * 7;
-        pose.legL = -0.08 * k;
-        pose.legR = 0.08 * k;
-        pose.armL = 0.12 * k;
-        pose.armR = -0.12 * k;
-      } else if (p < 0.84) {
-        const k = (p - 0.22) / 0.62;
-        rootY = 7 * (1 - k) - Math.sin(k * Math.PI) * 78;
-        const tuck = Math.sin(k * Math.PI);
-        pose.legL = 0.22 * tuck;
-        pose.legR = -0.22 * tuck;
-        pose.armL = -0.32 * tuck;
-        pose.armR = 0.32 * tuck;
-        pose.body = Math.sin(k * Math.PI * 2) * 0.04;
-      } else if (p < 1.09) {
-        const k = (p - 0.84) / 0.25;
-        rootY = Math.sin(k * Math.PI) * 6;
-        pose.legL = -0.06 * Math.sin(k * Math.PI);
-        pose.legR = 0.06 * Math.sin(k * Math.PI);
-      }
-    }
-
-    // Secondary motion: parts lag behind the root's vertical acceleration.
-    const v = (rootY - this.prevY) / Math.max(dt, 1e-3);
-    const acc = clamp((v - this.prevV) / Math.max(dt, 1e-3), -6000, 6000);
-    this.prevY = rootY;
-    this.prevV = v;
-    for (const p of this.parts.values()) {
-      if (p.bone === 'legL' || p.bone === 'legR') continue;
-      const lever = p.side !== 0 ? p.side : p.bone === 'head' ? 0.6 : 0.25;
-      const force = -acc * 0.000035 * lever;
-      p.wobV += (force - p.wob * 160 - p.wobV * 9) * dt;
-      p.wob = clamp(p.wob + p.wobV * dt, -0.16, 0.16);
-    }
-
-    this.root.position.set(0, rootY);
-    for (const p of this.parts.values()) p.c.rotation = (pose[p.bone] ?? 0) + p.wob;
   }
 
   destroy() {

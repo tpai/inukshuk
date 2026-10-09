@@ -3,7 +3,7 @@
 import { Graphics } from 'pixi.js';
 import {
   type Vec, mulberry32, convexHull, centroid, darken, lighten, mix, hex, rotate, bounds,
-  pointInConvex, outwardNormal, smoothstep,
+  pointInConvex, outwardNormal, smoothstep, clipConvex,
 } from './util';
 import type { Season } from './env';
 
@@ -119,14 +119,22 @@ export function drawStone(g: Graphics, s: StoneShape, angle: number, weather: We
   // Base silhouette in shadow tone.
   g.poly(flat).fill(darken(base, 0.24));
 
-  // Lit body, nudged toward the sky.
-  const up = toLocal({ x: -0.6, y: -1.4 });
-  g.poly(s.poly.flatMap((p) => [p.x * 0.95 + up.x, p.y * 0.95 + up.y])).fill(base);
+  // Both light layers are clipped to the silhouette, so they never spill past the edge however
+  // the stone is turned (a slate on its end used to show its highlight beside it).
+  const shifted = (k: number, d: Vec) => clipConvex(s.poly.map((p) => ({ x: p.x * k + d.x, y: p.y * k + d.y })), s.poly);
 
-  // Soft highlight from the upper left.
-  const hl = toLocal({ x: -s.w * 0.12, y: -s.h * 0.16 });
-  const hs = s.style === 2 ? 0.7 : 0.55;
-  g.poly(s.poly.flatMap((p) => [p.x * hs + hl.x, p.y * hs + hl.y])).fill({ color: lighten(base, 0.2), alpha: 0.45 });
+  // Lit body, nudged toward the sky.
+  const lit = shifted(0.95, toLocal({ x: -0.6, y: -1.4 }));
+  if (lit.length > 2) g.poly(lit.flatMap((p) => [p.x, p.y])).fill(base);
+
+  // Soft highlight from the upper left, sized by how far the stone reaches in each world direction.
+  const ext = (dir: Vec) => {
+    const d = toLocal(dir);
+    return Math.max(...s.poly.map((p) => p.x * d.x + p.y * d.y));
+  };
+  const hl = toLocal({ x: -ext({ x: -1, y: 0 }) * 0.24, y: -ext({ x: 0, y: -1 }) * 0.32 });
+  const glow = shifted(s.style === 2 ? 0.7 : 0.55, hl);
+  if (glow.length > 2) g.poly(glow.flatMap((p) => [p.x, p.y])).fill({ color: lighten(base, 0.2), alpha: 0.45 });
 
   const r = mulberry32(s.seed ^ 0x9e3779b9);
   const inside = (p: Vec) => pointInConvex(p, s.poly.map((q) => ({ x: q.x * 0.88, y: q.y * 0.88 })));

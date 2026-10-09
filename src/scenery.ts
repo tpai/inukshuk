@@ -66,6 +66,10 @@ export class Scenery {
   private moon = new Graphics();
   private clouds = new Container();
   private ridges: Graphics[] = [];
+  /** Animals living on each ridge, scrolled with it. Far → near. */
+  readonly ridgeAnimals: Container[] = [];
+  private ridgeHeights: number[][] = [];
+  private ridgePeriod = 600;
   private ground = new Graphics();
   private groundDeco = new Graphics();
   private grass = new Graphics();
@@ -77,6 +81,8 @@ export class Scenery {
   private h = 0;
   groundY = 0;
   scroll = 0;
+  /** Screen y the sun and moon must stay below, so titles and hints never cover them. */
+  reserveTop = 0;
   palette: Palette = paletteAt(12);
   env: Env | null = null;
   /** Colour to tint ground-level things (stones, birds) by. */
@@ -86,8 +92,10 @@ export class Scenery {
     this.back.addChild(this.sky, this.stars, this.sun, this.moon, this.clouds);
     for (let i = 0; i < 3; i++) {
       const g = new Graphics();
+      const animals = new Container();
       this.ridges.push(g);
-      this.back.addChild(g);
+      this.ridgeAnimals.push(animals);
+      this.back.addChild(g, animals);
     }
     this.back.addChild(this.ground, this.groundDeco, this.grass);
     const r = mulberry32(seed + 3);
@@ -136,6 +144,7 @@ export class Scenery {
       const amps = s.freqs.map((_, i) => 1 / (i + 1) ** 0.9);
       const total = amps.reduce((a, b) => a + b, 0);
       const pts: number[] = [];
+      const heights: number[] = [];
       const step = 6;
       for (let x = 0; x <= W * 2; x += step) {
         let v = 0;
@@ -143,11 +152,34 @@ export class Scenery {
         v = v / total;
         v = Math.sign(v) * Math.abs(v) ** (1 / s.sharp);
         pts.push(x, this.groundY * (s.base - s.amp * v));
+        heights.push(this.groundY * (s.base - s.amp * v));
       }
+      this.ridgeHeights[li] = heights;
+      this.ridgePeriod = W;
       pts.push(W * 2, this.groundY + 4, 0, this.groundY + 4);
       g.clear().poly(pts).fill(0xffffff);
       (g as Graphics & { period: number }).period = W;
     });
+  }
+
+  /** Height of ridge `i`'s skyline at x in that ridge's own (scrolling) coordinates. */
+  ridgeY(i: number, x: number): number {
+    const h = this.ridgeHeights[i];
+    if (!h) return this.groundY;
+    const W = this.ridgePeriod;
+    const k = (((x % W) + W) % W) / 6;
+    const i0 = Math.floor(k);
+    return lerp(h[i0], h[Math.min(i0 + 1, h.length - 1)], k - i0) + 1;
+  }
+
+  /** The visible span of ridge `i` in its own coordinates. */
+  ridgeView(i: number): [number, number] {
+    const x = this.ridges[i]?.x ?? 0;
+    return [-x + 20, -x + this.w - 20];
+  }
+
+  get period() {
+    return this.ridgePeriod;
   }
 
   private drawGround() {
@@ -235,7 +267,9 @@ export class Scenery {
     }
 
     // Sun and moon arcs.
-    const arc = (k: number) => ({ x: this.w * lerp(0.08, 0.92, k), y: this.groundY * (0.66 - Math.sin(k * Math.PI) * 0.36) });
+    const horizon = this.groundY * 0.66;
+    const peak = Math.min(horizon - 40, Math.max(this.groundY * 0.3, this.reserveTop + 80));
+    const arc = (k: number) => ({ x: this.w * lerp(0.08, 0.92, k), y: horizon - Math.sin(k * Math.PI) * (horizon - peak) });
     this.sun.clear();
     if (env.hour > 5.2 && env.hour < 19.3) {
       const p = arc((env.hour - 5.2) / 14.1);
@@ -273,6 +307,11 @@ export class Scenery {
       g.tint = mix(tints[i], 0xf4f6f8, seasonal * (1 - i * 0.3) * (1 - night * 0.6));
       const period = (g as Graphics & { period: number }).period;
       g.x = -(((this.scroll * (0.08 + i * 0.12)) % period) + period) % period;
+      // Distance haze: farther animals fade into the air.
+      const a = this.ridgeAnimals[i];
+      a.x = g.x;
+      a.tint = pal.light;
+      a.alpha = [0.55, 0.72, 0.88][i];
     });
 
     this.ground.tint = multiply(GROUND[env.season], pal.light);
