@@ -6,7 +6,7 @@ import { type Scene, ctx, go, h } from '../app';
 import { type Env, debug } from '../env';
 import { t, type Key } from '../i18n';
 import { Scenery } from '../scenery';
-import { type PlacedStone, type StoneStyle, STYLES, stoneShape, drawStone } from '../stone';
+import { type PlacedStone, type StoneStyle, STYLES, stoneShape, drawStone, clampScale } from '../stone';
 import { classify, drawBoneOverlay, worldPoly, type Verdict } from '../rig';
 import { sound } from '../audio';
 import { getSession, freshBatch, draft, saveSession, snapshot, restoreInto, pushHistory, statsOf } from './session';
@@ -19,6 +19,7 @@ const HALF_W = 200;
 interface Live {
   style: StoneStyle;
   seed: number;
+  scale: number;
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
   g: Graphics;
@@ -33,6 +34,7 @@ interface Grab {
   offsetLocal: Vec;
   target: Vec;
   angle: number;
+  scale: number;
   wheel?: number;
 }
 
@@ -49,7 +51,7 @@ export class BuildScene implements Scene {
   private stones: Live[] = [];
   private grab: Grab | null = null;
   private pointers = new Map<number, Vec>();
-  private twist: { start: number; angle: number } | null = null;
+  private twist: { start: number; angle: number; dist: number; scale: number } | null = null;
   private acc = 0;
   private orderCounter = 0;
   private stillFor = 0;
@@ -64,6 +66,8 @@ export class BuildScene implements Scene {
   private doneEl: HTMLButtonElement | null = null;
   private undoEl: HTMLButtonElement | null = null;
   private trayEl: HTMLElement | null = null;
+  private trashEl: HTMLElement | null = null;
+  private overTrash = false;
   private lastHint = '';
   private session = getSession();
 
@@ -80,7 +84,7 @@ export class BuildScene implements Scene {
       this.physics.createCollider(RAPIER.ColliderDesc.cuboid(20 / PPM, 40), wall);
     }
 
-    for (const s of this.session.stones) this.addStone(s.style, s.seed, { x: s.x, y: s.y }, s.angle);
+    for (const s of this.session.stones) this.addStone(s.style, s.seed, { x: s.x, y: s.y }, s.angle, s.scale);
 
     const canvas = ctx.app.canvas;
     canvas.addEventListener('pointerdown', this.onDown);
@@ -94,24 +98,39 @@ export class BuildScene implements Scene {
 
   // ---------- stones ----------
 
-  private addStone(style: StoneStyle, seed: number, at: Vec, angle = 0): Live {
-    const shape = stoneShape(style, seed);
+  private addStone(style: StoneStyle, seed: number, at: Vec, angle = 0, scale = 1): Live {
     const body = this.physics.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic().setTranslation(at.x / PPM, at.y / PPM).setRotation(angle).setAngularDamping(0.8).setLinearDamping(0.1),
     );
-    const pts = new Float32Array(shape.poly.flatMap((p) => [p.x / PPM, p.y / PPM]));
-    const desc = (RAPIER.ColliderDesc.convexHull(pts) ?? RAPIER.ColliderDesc.ball(shape.w / 2 / PPM))
-      .setFriction(style === 0 ? 0.7 : 0.95)
-      .setRestitution(0.02)
-      .setDensity(2.6);
-    const collider = this.physics.createCollider(desc, body);
+    const collider = this.physics.createCollider(this.colliderDesc(style, seed, scale), body);
     const g = new Graphics();
-    drawStone(g, shape, angle, null);
+    drawStone(g, stoneShape(style, seed, scale), angle, null);
     this.stonesLayer.addChild(g);
-    const live: Live = { style, seed, body, collider, g, drawnAngle: angle, prevSpeed: 0, order: this.orderCounter++ };
+    const live: Live = { style, seed, scale, body, collider, g, drawnAngle: angle, prevSpeed: 0, order: this.orderCounter++ };
     this.stones.push(live);
     this.syncGraphic(live);
     return live;
+  }
+
+  private colliderDesc(style: StoneStyle, seed: number, scale: number) {
+    const shape = stoneShape(style, seed, scale);
+    const pts = new Float32Array(shape.poly.flatMap((p) => [p.x / PPM, p.y / PPM]));
+    return (RAPIER.ColliderDesc.convexHull(pts) ?? RAPIER.ColliderDesc.ball(shape.w / 2 / PPM))
+      .setFriction(style === 0 ? 0.7 : 0.95)
+      .setRestitution(0.02)
+      .setDensity(2.6);
+  }
+
+  /** Grow or shrink a stone: new collider, redrawn graphic. */
+  private resizeStone(s: Live, scale: number) {
+    const groups = s.collider.collisionGroups();
+    this.physics.removeCollider(s.collider, true);
+    s.collider = this.physics.createCollider(this.colliderDesc(s.style, s.seed, scale), s.body);
+    s.collider.setCollisionGroups(groups);
+    s.scale = scale;
+    s.g.clear();
+    drawStone(s.g, stoneShape(s.style, s.seed, scale), s.body.rotation(), null);
+    s.drawnAngle = s.body.rotation();
   }
 
   private removeStone(s: Live, toTray: boolean) {
@@ -131,8 +150,14 @@ export class BuildScene implements Scene {
   private placed(): PlacedStone[] {
     return this.stones.map((s) => {
       const p = s.body.translation();
-      return { style: s.style, seed: s.seed, x: p.x * PPM, y: p.y * PPM, angle: s.body.rotation() };
+      return this.at(s, p.x * PPM, p.y * PPM);
     });
+  }
+
+  private at(s: Live, x: number, y: number): PlacedStone {
+    const p: PlacedStone = { style: s.style, seed: s.seed, x, y, angle: s.body.rotation() };
+    if (s.scale !== 1) p.scale = s.scale;
+    return p;
   }
 
   private persist() {
@@ -156,7 +181,7 @@ export class BuildScene implements Scene {
     const sorted = [...this.stones].sort((a, b) => b.order - a.order);
     for (const s of sorted) {
       const tr = s.body.translation();
-      const poly = worldPoly({ style: s.style, seed: s.seed, x: tr.x * PPM, y: tr.y * PPM, angle: s.body.rotation() });
+      const poly = worldPoly(this.at(s, tr.x * PPM, tr.y * PPM));
       if (pointInConvex(p, poly)) return s;
     }
     return null;
@@ -170,7 +195,7 @@ export class BuildScene implements Scene {
     // Lifted stones pass over the others, like a stone held in the hand.
     s.collider.setCollisionGroups(0);
     s.g.alpha = 0.92;
-    this.grab = { stone: s, pointerId, offsetLocal: rotate(offWorld, -angle), target: { x: tr.x * PPM, y: tr.y * PPM }, angle };
+    this.grab = { stone: s, pointerId, offsetLocal: rotate(offWorld, -angle), target: { x: tr.x * PPM, y: tr.y * PPM }, angle, scale: s.scale };
     s.order = this.orderCounter++;
     this.stonesLayer.addChild(s.g); // bring to front
   }
@@ -180,6 +205,7 @@ export class BuildScene implements Scene {
     if (!g) return;
     this.grab = null;
     this.twist = null;
+    this.setOverTrash(false);
     this.liftClear(g.stone);
     this.session.moves++;
     g.stone.collider.setCollisionGroups(0xffffffff);
@@ -193,10 +219,10 @@ export class BuildScene implements Scene {
   /** Raise a released stone until it no longer overlaps any other, so it settles instead of exploding apart. */
   private liftClear(s: Live) {
     const tr = s.body.translation();
-    const base: PlacedStone = { style: s.style, seed: s.seed, x: tr.x * PPM, y: tr.y * PPM, angle: s.body.rotation() };
+    const base = this.at(s, tr.x * PPM, tr.y * PPM);
     const others = this.stones.filter((o) => o !== s).map((o) => {
       const p = o.body.translation();
-      return worldPoly({ style: o.style, seed: o.seed, x: p.x * PPM, y: p.y * PPM, angle: o.body.rotation() });
+      return worldPoly(this.at(o, p.x * PPM, p.y * PPM));
     });
     let y = base.y;
     for (let i = 0; i < 200; i++) {
@@ -228,7 +254,7 @@ export class BuildScene implements Scene {
   private beginTwist() {
     if (!this.grab || this.pointers.size < 2) return;
     const [a, b] = [...this.pointers.values()];
-    this.twist = { start: Math.atan2(b.y - a.y, b.x - a.x), angle: this.grab.angle };
+    this.twist = { start: Math.atan2(b.y - a.y, b.x - a.x), angle: this.grab.angle, dist: Math.max(10, Math.hypot(b.x - a.x, b.y - a.y)), scale: this.grab.scale };
   }
 
   private onMove = (e: PointerEvent) => {
@@ -239,14 +265,14 @@ export class BuildScene implements Scene {
     if (this.twist && this.pointers.size >= 2) {
       const [a, b] = [...this.pointers.values()];
       g.angle = this.twist.angle + (Math.atan2(b.y - a.y, b.x - a.x) - this.twist.start);
+      // Pinch to resize, in the same gesture as the twist.
+      g.scale = clampScale(this.twist.scale * (Math.hypot(b.x - a.x, b.y - a.y) / this.twist.dist));
     }
     if (e.pointerId === g.pointerId) {
       const p = this.toLogical(e.clientX, e.clientY);
       const off = rotate(g.offsetLocal, g.angle);
-      const shape = stoneShape(g.stone.style, g.stone.seed);
-      const x = Math.max(-HALF_W + 10, Math.min(HALF_W - 10, p.x + off.x));
-      const y = Math.min(-Math.max(shape.w, shape.h) / 2 - 2, p.y + off.y);
-      g.target = { x, y };
+      g.target = { x: Math.max(-HALF_W + 10, Math.min(HALF_W - 10, p.x + off.x)), y: p.y + off.y };
+      this.setOverTrash(this.inTrash(e.clientX, e.clientY));
     }
   };
 
@@ -258,12 +284,13 @@ export class BuildScene implements Scene {
       this.twist = null;
       return;
     }
-    if (e.clientY > this.trayTop) {
-      this.removeStone(g.stone, true);
-      this.grab = null;
+    if (this.inTrash(e.clientX, e.clientY)) {
       this.twist = null;
+      this.setOverTrash(false);
+      this.removeStone(g.stone, false);
       return;
     }
+    // Let go anywhere else, the tray included, and the stone drops onto the slab.
     this.release();
   };
 
@@ -277,7 +304,9 @@ export class BuildScene implements Scene {
       g = this.grab!;
     }
     e.preventDefault();
-    g.angle += Math.sign(e.deltaY) * 0.08;
+    // Ctrl+wheel (also a trackpad pinch) resizes; the plain wheel turns.
+    if (e.ctrlKey) g.scale = clampScale(g.scale * Math.exp(-Math.max(-40, Math.min(40, e.deltaY)) * 0.005));
+    else g.angle += Math.sign(e.deltaY) * 0.08;
     if (g.pointerId === -1) {
       clearTimeout(g.wheel);
       g.wheel = window.setTimeout(() => this.grab === g && this.release(), 350);
@@ -288,7 +317,23 @@ export class BuildScene implements Scene {
     if (!this.grab) return;
     if (e.key === 'q' || e.key === 'Q') this.grab.angle -= 0.1;
     if (e.key === 'e' || e.key === 'E') this.grab.angle += 0.1;
+    if (e.key === '-' || e.key === '_') this.grab.scale = clampScale(this.grab.scale - 0.1);
+    if (e.key === '=' || e.key === '+') this.grab.scale = clampScale(this.grab.scale + 0.1);
   };
+
+  private inTrash(x: number, y: number) {
+    if (!this.trashEl?.classList.contains('show')) return false;
+    const r = this.trashEl.getBoundingClientRect();
+    const pad = 12;
+    return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+  }
+
+  private setOverTrash(over: boolean) {
+    if (over === this.overTrash) return;
+    this.overTrash = over;
+    this.trashEl?.classList.toggle('hot', over);
+    if (this.grab) this.grab.stone.g.alpha = over ? 0.45 : 0.92;
+  }
 
   private spawnFromTray(style: StoneStyle, slot: number, e: PointerEvent) {
     if (this.stones.length >= MAX) return;
@@ -317,6 +362,8 @@ export class BuildScene implements Scene {
     this.hintEl = h('p.hint', { 'aria-live': 'polite' });
     this.doneEl = h('button.pebble.done', { onclick: () => this.finish(), disabled: true }, t('done'));
     this.trayEl = h('div.tray-stones');
+    this.trashEl = h('div.trash', { role: 'img', 'aria-label': t('trash') });
+    this.trashEl.innerHTML = TRASH_SVG;
 
     const tabs = h(
       'div.tabs',
@@ -343,6 +390,7 @@ export class BuildScene implements Scene {
         ),
       ),
       this.hintEl,
+      this.trashEl,
       h('section.tray', { 'aria-label': t(STYLE_KEYS[s.style]) },
         h('div.tray-head', {}, tabs, h('button.text-btn', { onclick: () => this.reroll() }, t('reroll'))),
         this.trayEl,
@@ -393,7 +441,7 @@ export class BuildScene implements Scene {
 
   /** Key of a layout, coarse enough that physics jitter doesn't count as a change. */
   private layoutKey(stones: PlacedStone[]) {
-    return stones.map((p) => `${p.seed}:${Math.round(p.x)}:${Math.round(p.y)}:${p.angle.toFixed(2)}`).join('|');
+    return stones.map((p) => `${p.seed}:${Math.round(p.x)}:${Math.round(p.y)}:${p.angle.toFixed(2)}:${p.scale ?? 1}`).join('|');
   }
 
   /** Record the current layout as a save point once the stack has settled. */
@@ -418,7 +466,7 @@ export class BuildScene implements Scene {
     this.session.undos++;
     for (const s of [...this.stones]) this.removeStone(s, false);
     restoreInto(this.session, target);
-    for (const p of this.session.stones) this.addStone(p.style, p.seed, { x: p.x, y: p.y }, p.angle);
+    for (const p of this.session.stones) this.addStone(p.style, p.seed, { x: p.x, y: p.y }, p.angle, p.scale);
     this.stillFor = 0;
     this.renderTray();
     saveSession();
@@ -443,6 +491,7 @@ export class BuildScene implements Scene {
     this.trayTop = tray ? tray.getBoundingClientRect().top : hgt - 200;
     const top = bar ? bar.getBoundingClientRect().bottom : 90;
     this.groundY = this.trayTop - 22;
+    if (this.trashEl) this.trashEl.style.bottom = hgt - this.trayTop + 14 + 'px';
     this.scale = Math.max(0.5, Math.min(w / (HALF_W * 2 + 30), (this.groundY - top - 10) / 470, 1.6));
     this.world.position.set(w / 2, this.groundY);
     this.world.scale.set(this.scale);
@@ -477,6 +526,10 @@ export class BuildScene implements Scene {
       const k = 0.5;
       b.setNextKinematicTranslation({ x: (cur.x * PPM + (g.target.x - cur.x * PPM) * k) / PPM, y: (cur.y * PPM + (g.target.y - cur.y * PPM) * k) / PPM });
       b.setNextKinematicRotation(b.rotation() + (g.angle - b.rotation()) * 0.5);
+      if (g.scale !== g.stone.scale) this.resizeStone(g.stone, g.scale);
+      // Keep a held stone above the slab, however big it has grown.
+      const shape = stoneShape(g.stone.style, g.stone.seed, g.stone.scale);
+      g.target.y = Math.min(-Math.max(shape.w, shape.h) / 2 - 2, g.target.y);
     }
 
     this.acc += Math.min(dt, 0.1);
@@ -502,7 +555,7 @@ export class BuildScene implements Scene {
         if (s.prevSpeed > 1.4 && speed < s.prevSpeed * 0.45) sound.clack(s.prevSpeed / 7);
         if (speed < 0.05 && Math.abs(s.body.rotation() - s.drawnAngle) > 0.35) {
           s.g.clear();
-          drawStone(s.g, stoneShape(s.style, s.seed), s.body.rotation(), null);
+          drawStone(s.g, stoneShape(s.style, s.seed, s.scale), s.body.rotation(), null);
           s.drawnAngle = s.body.rotation();
         }
       }
@@ -517,7 +570,7 @@ export class BuildScene implements Scene {
     }
 
     const placed = this.placed();
-    const key = placed.map((p) => `${p.seed}:${Math.round(p.x)}:${Math.round(p.y)}:${p.angle.toFixed(1)}`).join('|');
+    const key = placed.map((p) => `${p.seed}:${Math.round(p.x)}:${Math.round(p.y)}:${p.angle.toFixed(1)}:${p.scale ?? 1}`).join('|');
     if (key !== this.verdictKey && (this.stillFor > 0.25 || !placed.length)) {
       this.verdictKey = key;
       this.verdict = classify(placed);
@@ -551,6 +604,7 @@ export class BuildScene implements Scene {
       const h = this.session.history;
       this.undoEl.disabled = h.length <= 1 && this.layoutKey(this.placed()) === this.layoutKey(h[0]?.stones ?? []);
     }
+    this.trashEl?.classList.toggle('show', !!this.grab && this.grab.pointerId !== -1);
     const full = n >= MAX;
     this.trayEl?.classList.toggle('full', full);
     this.trayEl?.querySelectorAll<HTMLButtonElement>('button.slot').forEach((b) => (b.disabled = full));
@@ -571,6 +625,11 @@ export class BuildScene implements Scene {
     this.root.destroy({ children: true });
   }
 }
+
+const TRASH_SVG =
+  '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M4 7h16"/><path d="M9.5 7V4.8c0-.5.4-.8.8-.8h3.4c.4 0 .8.3.8.8V7"/>' +
+  '<path d="M6 7l1 12.2c.1.9.8 1.6 1.7 1.6h6.6c.9 0 1.6-.7 1.7-1.6L18 7"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
 
 // ---------- thumbnails ----------
 

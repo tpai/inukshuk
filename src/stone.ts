@@ -26,6 +26,16 @@ export interface PlacedStone {
   x: number;
   y: number;
   angle: number;
+  /** Size relative to the stone as it comes out of the tray; 1 when absent. */
+  scale?: number;
+}
+
+export const MIN_SCALE = 0.5;
+export const MAX_SCALE = 2;
+
+/** Clamp a size and snap it to the 1% steps the share link can carry. */
+export function clampScale(k: number) {
+  return Math.round(Math.max(MIN_SCALE, Math.min(MAX_SCALE, k)) * 100) / 100;
 }
 
 const PALETTES: string[][] = [
@@ -36,7 +46,16 @@ const PALETTES: string[][] = [
 
 const cache = new Map<string, StoneShape>();
 
-export function stoneShape(style: StoneStyle, seed: number): StoneShape {
+export function stoneShape(style: StoneStyle, seed: number, scale = 1): StoneShape {
+  if (scale !== 1) {
+    const key = style + ':' + seed + '@' + scale;
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const base = stoneShape(style, seed);
+    const scaled = { ...base, poly: base.poly.map((p) => ({ x: p.x * scale, y: p.y * scale })), w: base.w * scale, h: base.h * scale };
+    cache.set(key, scaled);
+    return scaled;
+  }
   const key = style + ':' + seed;
   const hit = cache.get(key);
   if (hit) return hit;

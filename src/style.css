@@ -402,6 +402,31 @@ button:disabled { cursor: default; }
 
 .done { grid-area: done; min-width: 112px; }
 
+/* ---- trash (build) ---- */
+
+.trash {
+  position: absolute;
+  right: max(16px, calc(50% - 264px));
+  bottom: 220px;
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  color: var(--granite);
+  background: var(--paper);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 2px dashed rgba(94, 84, 72, 0.35);
+  border-radius: 30px 26px 28px 24px / 26px 30px 24px 28px;
+  box-shadow: 0 6px 14px -8px rgba(60, 30, 15, 0.6);
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 160ms ease, transform 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.trash.show { opacity: 1; transform: scale(1); }
+.trash.hot { color: #f4ece0; background: #8f3b25; border-color: transparent; transform: scale(1.15); }
+
 /* ---- toast ---- */
 
 .toast {

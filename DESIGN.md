@@ -7,7 +7,7 @@ Personal web prototype. No gacha economy, no Play level, no Clan/Journal/Explore
 
 ## Screens
 - **Ridge (home)** — every inukshuk you've placed stands along one ridge, weathering in real time. Swipe sideways.
-- **Build** — tray of 8 procedurally generated stones per style (river / canyon / slate), "New batch" rerolls. Free stacking under Rapier physics; a held stone passes over the others and is lifted clear before it drops. Single-finger drag, two-finger twist, wheel or Q/E to rotate; "Left 45° / Right 45°" turn the whole tray, and stones come out at that angle. 20 stones max.
+- **Build** — tray of 8 procedurally generated stones per style (river / canyon / slate), "New batch" rerolls. Free stacking under Rapier physics; a held stone passes over the others and is lifted clear before it drops. Single-finger drag, two-finger twist, wheel or Q/E to rotate; two-finger pinch, Ctrl+wheel (trackpad pinch) or −/+ to resize a held stone (0.5×–2×, physics follows). "Left 45° / Right 45°" turn the whole tray, and stones come out at that angle. A stone let go anywhere, the tray included, drops onto the slab; while one is held a bin appears above the tray, and dropping it there discards it for good. 20 stones max.
   - Every time the stack settles, a save point is recorded. "Undo" returns to the previous stable state (so a collapse is one tap away from being reversed). The in-progress build and its save points persist in `localStorage` (`inukshuk.v1.build`).
   - Valid figure: two separate ground clusters (legs), one stone clear of the ground bridging them (body), whole stack still for 2 s. Arms and head are optional and inferred.
 - **Preview** — the finished inukshuk stands still in the living landscape (no figure animation). Below it: when building started, how long it took (time actually spent on the Build screen), stones used, times a stone was placed, and undos. Draft → "Place on the ridge"; saved → copy share link / remove; shared link → "Build my own".
@@ -22,7 +22,7 @@ Personal web prototype. No gacha economy, no Play level, no Clan/Journal/Explore
 
 ## Data
 - Saved in `localStorage` (`inukshuk.v1.ridge`).
-- Share link `#/s/<code>`: base64url of version, finish time, build stats (v2: start time, duration, moves, undos) and per stone style + seed + x/y/angle (11 bytes each). Stones regenerate from their seed. v1 links (no stats) still open.
+- Share link `#/s/<code>`: base64url of version, finish time, build stats (v2: start time, duration, moves, undos) and per stone style + seed + x/y/angle (11 bytes each). If any stone is resized, the version byte gets the 0x80 flag and every stone carries one more byte for its size (×100). Stones regenerate from their seed. v1 links (no stats) still open.
 
 ## Debug
 Add `?debug` to the URL: hour, age (0–400 d), season, hemisphere overrides; force an animal state; summon bird; gust; collider and bone overlays.

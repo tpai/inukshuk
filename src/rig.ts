@@ -25,7 +25,7 @@ interface Info {
 }
 
 export function worldPoly(s: PlacedStone): Vec[] {
-  return transform(stoneShape(s.style, s.seed).poly, s.x, s.y, s.angle);
+  return transform(stoneShape(s.style, s.seed, s.scale).poly, s.x, s.y, s.angle);
 }
 
 /** Pure geometry, so it works the same on a live build and on a stack decoded from a link. */
@@ -212,7 +212,7 @@ export class Rig {
       const part = this.parts.get(bones[i]) ?? body;
       const s = stones[i];
       const g = new Graphics();
-      drawStone(g, stoneShape(s.style, s.seed), s.angle, weather);
+      drawStone(g, stoneShape(s.style, s.seed, s.scale), s.angle, weather);
       g.position.set(s.x - part.pivot.x, s.y - part.pivot.y);
       g.rotation = s.angle;
       part.c.addChild(g);
