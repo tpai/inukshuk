@@ -134,6 +134,7 @@ button:disabled { cursor: default; }
   border-radius: 50%;
   color: var(--on-sky);
   font-size: 15px;
+  text-decoration: none;
 }
 
 .icon-btn svg {
@@ -166,7 +167,7 @@ button:disabled { cursor: default; }
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: calc(8px + var(--safe-t)) 104px 0 8px;
+  padding: calc(8px + var(--safe-t)) 150px 0 8px;
   color: var(--on-sky);
 }
 
@@ -194,7 +195,7 @@ button:disabled { cursor: default; }
   position: absolute;
   top: calc(28px + var(--safe-t));
   left: 24px;
-  right: 104px;
+  right: 150px;
   color: var(--on-sky);
 }
 

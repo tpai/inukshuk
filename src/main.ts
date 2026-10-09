@@ -41,12 +41,16 @@ async function route() {
 function mountChrome() {
   const soundBtn = h('button.icon-btn', { onclick: () => sound.toggle() });
   const langBtn = h('button.icon-btn.lang', { onclick: () => setLang(lang === 'zh' ? 'en' : 'zh') });
+  const infoLink = h('a.icon-btn', { href: 'https://thecanadianencyclopedia.ca/en/article/inuksuk-inukshuk', target: '_blank', rel: 'noopener noreferrer' });
+  infoLink.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none"/><path d="M12 11v6" fill="none"/><circle cx="12" cy="7.6" r="0.6"/></svg>';
   const sync = () => {
     soundBtn.innerHTML = sound.enabled
       ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 8.5c1.2 1 1.8 2.2 1.8 3.5s-.6 2.5-1.8 3.5M18.5 6c2 1.6 3 3.6 3 6s-1 4.4-3 6" fill="none"/></svg>'
       : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9.5l5 5M22 9.5l-5 5" fill="none"/></svg>';
     soundBtn.setAttribute('aria-label', sound.enabled ? t('soundOff') : t('soundOn'));
     soundBtn.setAttribute('aria-pressed', String(sound.enabled));
+    infoLink.setAttribute('aria-label', t('about'));
+    infoLink.title = t('about');
     langBtn.textContent = t('langSwitch');
     langBtn.setAttribute('aria-label', t('langLabel'));
   };
@@ -56,7 +60,7 @@ function mountChrome() {
     scene?.render(ui);
   });
   sync();
-  document.body.append(h('div.chrome', {}, langBtn, soundBtn));
+  document.body.append(h('div.chrome', {}, infoLink, langBtn, soundBtn));
 }
 
 async function main() {

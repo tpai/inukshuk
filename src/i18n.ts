@@ -45,6 +45,7 @@ const dict = {
   notFound: { zh: '找不到這座石人，可能已經移除。', en: 'This inukshuk is gone. It may have been removed.' },
   soundOn: { zh: '開啟聲音', en: 'Turn sound on' },
   soundOff: { zh: '關閉聲音', en: 'Turn sound off' },
+  about: { zh: '關於 Inuksuk（YouTube 影片，在新視窗開啟）', en: 'About the inuksuk (YouTube video, opens in a new window)' },
   langSwitch: { zh: 'EN', en: '中文' },
   langLabel: { zh: 'Switch to English', en: '切換為中文' },
   spring: { zh: '春', en: 'spring' },
