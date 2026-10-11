@@ -110,6 +110,8 @@ export class HomeScene implements Scene {
       this.items.push(it);
       x += w + gap;
     }
+    // Animals walk in front of the inukshuks, never behind them.
+    this.ridge.addChild(this.groundAnimals);
     this.maxPan = Math.max(0, x - ctx.w + 40);
     this.itemScale = scale;
   }
