@@ -2,7 +2,7 @@
 // states it passed through so a collapse can be undone.
 
 import type { PlacedStone, StoneStyle } from '../stone';
-import type { BuildStats } from '../store';
+import type { BuildStats, Inukshuk } from '../store';
 import { randomSeed } from '../util';
 
 const TRAY_SIZE = 8;
@@ -31,6 +31,8 @@ export interface Session {
   /** Times a stone was let go onto the stack. */
   moves: number;
   undos: number;
+  /** Reworking an inukshuk already on the ridge: saving replaces it, and it keeps its age. */
+  reworking: { id: string; created: number } | null;
 }
 
 export const freshBatch = () => Array.from({ length: TRAY_SIZE }, randomSeed);
@@ -58,7 +60,7 @@ function load(): Session | null {
     if (!raw) return null;
     const s = JSON.parse(raw) as Session;
     if (!Array.isArray(s.stones) || !s.tray || !Array.isArray(s.history)) return null;
-    return { ...s, style: s.style ?? 0, startedAt: s.startedAt ?? null, activeMs: s.activeMs ?? 0, moves: s.moves ?? 0, undos: s.undos ?? 0 };
+    return { ...s, style: s.style ?? 0, startedAt: s.startedAt ?? null, activeMs: s.activeMs ?? 0, moves: s.moves ?? 0, undos: s.undos ?? 0, reworking: s.reworking ?? null };
   } catch {
     return null;
   }
@@ -75,11 +77,39 @@ export function saveSession() {
 
 export function getSession(): Session {
   if (!session) session = load();
-  if (!session) {
-    session = { stones: [], tray: { 0: freshBatch(), 1: freshBatch(), 2: freshBatch() }, style: 0, history: [], startedAt: null, activeMs: 0, moves: 0, undos: 0 };
-    pushHistory(session, snapshot(session));
-  }
+  if (!session) session = fresh(null);
   return session;
+}
+
+function fresh(from: Inukshuk | null): Session {
+  const st = from?.stats;
+  const s: Session = {
+    stones: from ? from.stones.map((p) => ({ ...p })) : [],
+    tray: { 0: freshBatch(), 1: freshBatch(), 2: freshBatch() },
+    style: 0,
+    history: [],
+    // Its story so far carries on: the time, moves and undos it took keep adding up.
+    startedAt: from ? (st?.startedAt ?? from.created) : null,
+    activeMs: st?.durationMs ?? 0,
+    moves: st?.moves ?? 0,
+    undos: st?.undos ?? 0,
+    reworking: from ? { id: from.id, created: from.created } : null,
+  };
+  pushHistory(s, snapshot(s));
+  return s;
+}
+
+/** An unfinished build that isn't a rework of `id`, which starting that rework would replace. */
+export function hasOtherWork(id: string): boolean {
+  const s = getSession();
+  return s.reworking?.id !== id && s.stones.length > 0;
+}
+
+/** Take an inukshuk off the ridge and back onto the Build slab, replacing any unfinished build. */
+export function startRework(item: Inukshuk) {
+  if (session?.reworking?.id === item.id) return;
+  session = fresh(item);
+  saveSession();
 }
 
 export function endSession() {

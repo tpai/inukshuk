@@ -11,7 +11,7 @@ import { Birds } from '../birds';
 import { Herd, ridgeTerrains, type Terrain } from '../animals';
 import * as store from '../store';
 import type { BuildStats } from '../store';
-import { draft, endSession } from './session';
+import { draft, endSession, getSession, hasOtherWork, startRework } from './session';
 
 export type PreviewMode =
   | { kind: 'draft' }
@@ -35,8 +35,11 @@ export class PreviewScene implements Scene {
   private stats: BuildStats | null = null;
   private created = Date.now();
   private savedId: string | null = null;
+  /** Someone else built it: it arrived on this ridge through a share link. */
+  private fromLink = false;
   private missing: Key | null = null;
   private removeArmed = 0;
+  private editArmed = 0;
   private ageEl: HTMLElement | null = null;
   private ui: HTMLElement | null = null;
   private groundY = 0;
@@ -54,13 +57,21 @@ export class PreviewScene implements Scene {
         this.created = item.created;
         this.stats = item.stats ?? null;
         this.savedId = item.id;
+        this.fromLink = !!item.shared;
       } else this.missing = 'notFound';
     } else {
-      const item = store.decode(mode.code);
-      if (item) {
+      const shared = store.decode(mode.code);
+      if (shared) {
+        // Opening a link brings the inukshuk home: it joins the viewer's ridge and is theirs from here on.
+        const { item, added } = store.importShared(shared);
         this.stones = item.stones;
         this.created = item.created;
         this.stats = item.stats ?? null;
+        this.savedId = item.id;
+        this.fromLink = !!item.shared;
+        this.mode = { kind: 'saved', id: item.id };
+        history.replaceState(null, '', '#/v/' + item.id);
+        if (added) toast(t('imported'));
       } else this.missing = 'brokenLink';
     }
     this.scenery = new Scenery((this.created / 1000) % 9973 | 0);
@@ -129,30 +140,40 @@ export class PreviewScene implements Scene {
     if (this.mode.kind === 'draft') {
       actions = h('div.actions', {},
         h('button.text-btn', { onclick: () => go('#/build') }, t('keepBuilding')),
-        h('button.pebble', { onclick: () => this.save() }, t('save')),
-      );
-    } else if (this.mode.kind === 'saved') {
-      const removeBtn = h('button.text-btn.danger', { onclick: () => this.remove(removeBtn) }, t('remove'));
-      actions = h('div.actions', {},
-        removeBtn,
-        h('button.pebble', { onclick: () => this.share() }, t('share')),
+        h('button.pebble', { onclick: () => this.save() }, t(getSession().reworking ? 'saveChanges' : 'save')),
       );
     } else {
+      const removeBtn = h('button.text-btn.danger', { onclick: () => this.remove(removeBtn) }, t('remove'));
+      const editBtn = h('button.text-btn', { onclick: () => this.rework() }, t('edit'));
       actions = h('div.actions', {},
-        h('p.someone', {}, t('someoneLeft')),
-        h('button.pebble', { onclick: () => go('#/build') }, t('buildMine')),
+        h('div.bar-actions', {}, removeBtn, editBtn),
+        h('button.pebble', { onclick: () => this.share() }, t('share')),
       );
     }
 
-    ui.append(h('footer.dock', {}, this.ageEl, facts, actions));
+    ui.append(h('footer.dock', {}, this.ageEl, facts, this.fromLink ? h('p.someone', {}, t('someoneLeft')) : null, actions));
     requestAnimationFrame(() => this.resize(ctx.w, ctx.h));
   }
 
   private save() {
-    const item = store.add(this.stones, this.created, this.stats);
+    const re = getSession().reworking;
+    const id = re && store.update(re.id, this.stones, this.stats) ? re.id : store.add(this.stones, this.created, this.stats).id;
     endSession();
-    toast(t('saved'));
-    go('#/v/' + item.id);
+    toast(t(re ? 'changesSaved' : 'saved'));
+    go('#/v/' + id);
+  }
+
+  /** Back onto the slab to keep working on it. An unfinished build in the way needs a second tap. */
+  private rework() {
+    const item = this.savedId ? store.get(this.savedId) : undefined;
+    if (!item) return;
+    if (hasOtherWork(item.id) && Date.now() - this.editArmed > 3000) {
+      this.editArmed = Date.now();
+      toast(t('editConfirm'));
+      return;
+    }
+    startRework(item);
+    go('#/build');
   }
 
   private async share() {

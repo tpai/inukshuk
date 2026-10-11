@@ -231,6 +231,9 @@ export class Animal {
   dir = 1;
   private target = 0;
   private timer = 0;
+  /** Seconds until a new arrival shows itself, then how far it has faded in (0–1). */
+  private wait = 0;
+  private shown = 1;
   private ph = Math.random() * 10;
   private t = Math.random() * 10;
   private crouch = 0;
@@ -319,14 +322,13 @@ export class Animal {
     this.graze = this.L.grazes && s === 'idle' && Math.random() < 0.6 ? 1 : 0;
   }
 
-  /** Walk in from just outside the view. */
-  enter() {
-    const t = this.terrain;
-    const left = Math.random() < 0.5;
-    this.x = left ? t.lo() - 40 : t.hi() + 40;
-    this.state = 'walk';
-    this.target = pickX(t, left ? t.lo() : t.hi());
-    this.timer = 60;
+  /** Turn up somewhere in the landscape after `delay` seconds, fading in where it stands. */
+  arrive(delay: number) {
+    this.x = pickX(this.terrain);
+    this.setState(Math.random() < 0.5 ? 'walk' : 'idle');
+    this.wait = delay;
+    this.shown = 0;
+    this.root.alpha = 0;
   }
 
   private decide(night: number) {
@@ -343,6 +345,11 @@ export class Animal {
     const L = this.L;
     const t = this.terrain;
     this.t += dt;
+    if (this.wait > 0) {
+      this.wait -= dt;
+      return;
+    }
+    if (this.shown < 1) this.root.alpha = this.shown = Math.min(1, this.shown + dt / 1.5);
     this.scale = this.baseScale * t.scale();
     const forced = debug.animalState;
     if (forced && this.state !== forced) this.setState(forced);
@@ -470,7 +477,7 @@ export class Herd {
     return this.terrains[0];
   }
 
-  /** Match the herd to an inukshuk's age. New arrivals walk in once the view is live. */
+  /** Match the herd to an inukshuk's age. Once the view is live, new arrivals turn up one by one at random spots. */
   sync(age: number) {
     const want: string[] = [];
     for (const a of ARRIVALS) if (age >= a.days) for (let i = 0; i < a.count; i++) want.push(a.species + i);
@@ -479,6 +486,7 @@ export class Herd {
         a.destroy();
         this.animals.splice(this.animals.indexOf(a), 1);
       }
+    let delay = 0;
     for (const a of ARRIVALS)
       for (let i = 0; i < a.count; i++) {
         if (age < a.days || this.animals.some((x) => x.id === a.species + i)) continue;
@@ -486,8 +494,10 @@ export class Herd {
         // A wolf pack keeps together.
         const pack = a.species === 'wolf' && i > 0 ? this.animals.find((x) => x.id === 'wolf0')?.terrain : undefined;
         animal.placeOn(pack ?? this.pickTerrain());
-        if (this.started) animal.enter();
-        else {
+        if (this.started) {
+          animal.arrive(delay);
+          delay += 0.8 + Math.random() * 2.2;
+        } else {
           animal.x = pickX(animal.terrain);
           animal.setState('idle');
         }

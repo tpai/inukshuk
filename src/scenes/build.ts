@@ -612,8 +612,9 @@ export class BuildScene implements Scene {
     if (this.frozen || !this.verdict.ok || this.stillFor < 2) return;
     this.persist();
     draft.stones = this.placed();
-    draft.created = Date.now();
-    draft.stats = statsOf(this.session, draft.created);
+    // A reworked inukshuk keeps the day it was first finished, and the weathering that goes with it.
+    draft.created = this.session.reworking?.created ?? Date.now();
+    draft.stats = statsOf(this.session, Date.now());
     go('#/draft');
   }
 

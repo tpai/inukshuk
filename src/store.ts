@@ -15,6 +15,8 @@ export interface Inukshuk {
   created: number; // ms, when it was finished
   stones: PlacedStone[];
   stats?: BuildStats;
+  /** Came from someone else's share link. */
+  shared?: true;
 }
 
 const KEY = 'inukshuk.v1.ridge';
@@ -37,10 +39,39 @@ function saveAll(list: Inukshuk[]) {
   }
 }
 
+function newItem(stones: PlacedStone[], created: number, stats: BuildStats | null): Inukshuk {
+  return { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), created, stones, ...(stats ? { stats } : {}) };
+}
+
 export function add(stones: PlacedStone[], created: number, stats: BuildStats | null): Inukshuk {
-  const item: Inukshuk = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), created, stones, ...(stats ? { stats } : {}) };
+  const item = newItem(stones, created, stats);
   saveAll([item, ...loadAll()]);
   return item;
+}
+
+/**
+ * Put a shared inukshuk on the viewer's ridge. Opening the same link again (or a link to one already
+ * there, such as your own) finds it rather than adding a copy.
+ */
+export function importShared(item: Shared): { item: Inukshuk; added: boolean } {
+  const code = encode(item);
+  const all = loadAll();
+  const found = all.find((i) => encode(i) === code);
+  if (found) return { item: found, added: false };
+  const added: Inukshuk = { ...newItem(item.stones, item.created, item.stats ?? null), shared: true };
+  saveAll([added, ...all]);
+  return { item: added, added: true };
+}
+
+/** Replace a reworked inukshuk's stones and stats; false if it is no longer on the ridge. */
+export function update(id: string, stones: PlacedStone[], stats: BuildStats | null): boolean {
+  const all = loadAll();
+  const item = all.find((i) => i.id === id);
+  if (!item) return false;
+  item.stones = stones;
+  if (stats) item.stats = stats;
+  saveAll(all);
+  return true;
 }
 
 export function remove(id: string) {
